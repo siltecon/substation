@@ -1,4 +1,37 @@
 // Package message provides functions for managing data used by conditions and transforms.
+//
+// Messages are the fundamental data structure in Substation. They flow through the
+// transformation pipeline and can contain JSON text, binary data, or both (as data
+// and metadata).
+//
+// # Message Types
+//
+// There are two types of messages:
+//
+//   - Data messages: Contain data to be processed by transforms. Data can be JSON
+//     text (accessed via GetValue/SetValue) or binary (accessed via Data/SetData).
+//
+//   - Control messages: Special messages used for flow control, typically to signal
+//     the end of a batch or to flush stateful transforms. Created using AsControl().
+//
+// # Working with JSON Data
+//
+// For JSON messages, the GetValue, SetValue, and DeleteValue methods provide a
+// convenient way to read and modify specific fields using dot notation:
+//
+//	msg := message.New().SetData([]byte(`{"user": {"name": "Alice"}}`))
+//	name := msg.GetValue("user.name").String() // "Alice"
+//	msg.SetValue("user.age", 30)
+//
+// # Metadata
+//
+// Each message can also carry metadata, which is accessed by prefixing keys with
+// "meta ":
+//
+//	msg.SetValue("meta source", "api")
+//	source := msg.GetValue("meta source").String()
+//
+// Binary metadata is accessed using the Metadata and SetMetadata methods.
 package message
 
 import (
@@ -52,7 +85,10 @@ func (m *Message) String() string {
 	return string(m.data)
 }
 
-// New returns a new Message.
+// New returns a new Message. Optional functions can be provided to configure
+// the message during creation, though it's more common to use method chaining:
+//
+//	msg := message.New().SetData([]byte(`{"key": "value"}`))
 func New(opts ...func(*Message)) *Message {
 	msg := &Message{}
 	for _, o := range opts {
@@ -62,7 +98,14 @@ func New(opts ...func(*Message)) *Message {
 	return msg
 }
 
-// AsControl sets the message as a control message.
+// AsControl converts the message to a control message. Control messages are
+// used for flow control in pipelines, such as signaling the end of a batch
+// or triggering stateful transforms to flush their internal state.
+//
+// Control messages do not contain data or metadata - calling this method
+// clears any existing data and metadata.
+//
+// Returns the message to allow method chaining.
 func (m *Message) AsControl() *Message {
 	m.data = nil
 	m.meta = nil
@@ -72,11 +115,13 @@ func (m *Message) AsControl() *Message {
 }
 
 // IsControl returns true if the message is a control message.
+// Control messages should typically be passed through transforms unchanged
+// or used to trigger flushing of internal state.
 func (m *Message) IsControl() bool {
 	return m.ctrl
 }
 
-// Data returns the message data.
+// Data returns the message data as a byte slice. Returns nil for control messages.
 func (m *Message) Data() []byte {
 	if m.ctrl {
 		return nil
@@ -85,7 +130,8 @@ func (m *Message) Data() []byte {
 	return m.data
 }
 
-// SetData sets the message data.
+// SetData sets the message data. Has no effect on control messages.
+// Returns the message to allow method chaining.
 func (m *Message) SetData(data []byte) *Message {
 	if m.ctrl {
 		return m
@@ -95,7 +141,7 @@ func (m *Message) SetData(data []byte) *Message {
 	return m
 }
 
-// Metadata returns the message metadata.
+// Metadata returns the message metadata as a byte slice. Returns nil for control messages.
 func (m *Message) Metadata() []byte {
 	if m.ctrl {
 		return nil
@@ -104,7 +150,8 @@ func (m *Message) Metadata() []byte {
 	return m.meta
 }
 
-// SetMetadata sets the message metadata.
+// SetMetadata sets the message metadata. Has no effect on control messages.
+// Returns the message to allow method chaining.
 func (m *Message) SetMetadata(metadata []byte) *Message {
 	if m.ctrl {
 		return m

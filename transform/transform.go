@@ -1,4 +1,57 @@
 // Package transform provides functions for transforming messages.
+//
+// Transforms are the core building blocks of Substation pipelines. Each transform
+// implements the Transformer interface and processes messages by reading data,
+// modifying it, and returning zero or more result messages.
+//
+// # Transform Categories
+//
+// Transforms are organized into the following categories:
+//
+//   - Aggregation: Combine or split messages (e.g., aggregate_to_array, aggregate_from_array)
+//   - Array: Operations on JSON arrays (e.g., array_join, array_zip)
+//   - Enrichment: Add data from external sources (e.g., enrich_http_get, enrich_dns_lookup)
+//   - Format: Convert data formats (e.g., format_from_base64, format_to_gzip)
+//   - Hash: Generate hashes (e.g., hash_md5, hash_sha256)
+//   - Meta: Control flow and composition (e.g., meta_switch, meta_for_each)
+//   - Network: Domain and IP operations (e.g., network_domain_subdomain)
+//   - Number: Numeric operations (e.g., number_math_addition, number_maximum)
+//   - Object: JSON object manipulation (e.g., object_copy, object_delete, object_insert)
+//   - Send: Output data to destinations (e.g., send_stdout, send_aws_s3)
+//   - String: String manipulation (e.g., string_replace, string_to_lower)
+//   - Time: Time parsing and formatting (e.g., time_from_string, time_to_unix)
+//   - Utility: Helper transforms (e.g., utility_drop, utility_delay)
+//
+// # Using Transforms
+//
+// Transforms are typically created using the New factory function with a
+// configuration that specifies the transform type and settings:
+//
+//	cfg := config.Config{
+//		Type: "object_copy",
+//		Settings: map[string]interface{}{
+//			"object": map[string]interface{}{
+//				"source_key": "input.field",
+//				"target_key": "output.field",
+//			},
+//		},
+//	}
+//	tf, err := transform.New(ctx, cfg)
+//
+// # Custom Transforms
+//
+// Custom transforms can be created by implementing the Transformer interface.
+// The Transform method receives a message and returns zero or more result
+// messages. Control messages (identified by IsControl()) should typically be
+// passed through unchanged:
+//
+//	func (t *MyTransform) Transform(ctx context.Context, msg *message.Message) ([]*message.Message, error) {
+//		if msg.IsControl() {
+//			return []*message.Message{msg}, nil
+//		}
+//		// Process the message...
+//		return []*message.Message{msg}, nil
+//	}
 package transform
 
 import (
@@ -16,14 +69,34 @@ var errMsgInvalidObject = fmt.Errorf("message must be JSON object")
 
 // Transformer is the interface implemented by all transforms and
 // provides the ability to transform a message.
+//
+// The Transform method receives a context and a message, and returns
+// a slice of messages and an error. Transforms may return:
+//   - Zero messages: The message was dropped/filtered
+//   - One message: The message was modified in place
+//   - Multiple messages: The message was split into multiple messages
+//
+// Transforms should handle control messages appropriately, typically by
+// passing them through unchanged or by using them to flush internal state.
 type Transformer interface {
 	Transform(context.Context, *message.Message) ([]*message.Message, error)
 }
 
-// Factory can be used to implement custom transform factory functions.
+// Factory is a function type that creates Transformer instances from
+// configuration. It can be used to implement custom transform factory
+// functions that extend or replace the default transform types.
+//
+// Custom factories should typically delegate to the default New function
+// for unknown transform types to maintain compatibility with built-in
+// transforms.
 type Factory func(context.Context, config.Config) (Transformer, error)
 
-// New is a factory function for returning a configured Transformer.
+// New is a factory function for returning a configured Transformer based on
+// the Type field in the configuration. The Settings field contains type-specific
+// configuration options.
+//
+// Returns an error if the transform type is not recognized or if the
+// configuration is invalid for the specified type.
 func New(ctx context.Context, cfg config.Config) (Transformer, error) { //nolint: cyclop, gocyclo // ignore cyclomatic complexity
 	switch cfg.Type {
 	// Aggregation transforms.
@@ -219,7 +292,16 @@ func New(ctx context.Context, cfg config.Config) (Transformer, error) { //nolint
 	}
 }
 
-// Applies one or more transform functions to one or more messages.
+// Apply executes one or more transform functions on one or more messages in
+// sequence. Each transform processes all messages from the previous step
+// before passing results to the next transform.
+//
+// If a transform returns an error, Apply immediately returns that error
+// along with a nil message slice. Transforms that need error handling
+// should use the meta_err transform.
+//
+// Control messages are passed through each transform and can be used to
+// trigger flushing of internal state in stateful transforms.
 func Apply(ctx context.Context, tf []Transformer, msgs ...*message.Message) ([]*message.Message, error) {
 	resultMsgs := make([]*message.Message, len(msgs))
 	copy(resultMsgs, msgs)
